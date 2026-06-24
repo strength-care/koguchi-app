@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小口精算｜記録する</title>
+<style>
+  :root{ --navy:#041E69; --navy2:#0a3196; --gold:#C8A951; --ink:#1c2330;
+    --line:#dfe3ec; --muted:#6b7488; --bg:#f4f6fb; --card:#fff; --yellow:#FFF6C8; --yellow-br:#E7CE66;
+    --ok:#0f7b4f; --ok-bg:#e8f6ee; --warn:#b3261e; --pay:#0a3196; --add:#0f7b4f; }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:"Meiryo UI","Meiryo","Segoe UI",sans-serif;background:var(--bg);color:var(--ink);font-size:14px;}
+  header{background:linear-gradient(135deg,var(--navy),var(--navy2));color:#fff;padding:15px 18px;border-bottom:3px solid var(--gold);}
+  header .ttl{font-size:17px;font-weight:800;}
+  header .sub{font-size:11.5px;opacity:.85;margin-top:2px;}
+  main{padding:16px;max-width:560px;margin:0 auto;}
+  .balance{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;text-align:center;box-shadow:0 1px 3px rgba(6,32,95,.05);}
+  .balance .lbl{font-size:12px;color:var(--muted);font-weight:700;}
+  .balance .amt{font-size:32px;font-weight:800;color:var(--navy);margin-top:2px;}
+  .balance .amt.spin{font-size:15px;color:var(--muted);font-weight:600;}
+  .seg{display:flex;gap:6px;background:#eef1f8;border-radius:12px;padding:5px;margin-bottom:14px;}
+  .seg button{flex:1;border:none;background:none;padding:11px;border-radius:9px;font-size:14px;font-weight:800;color:var(--muted);cursor:pointer;font-family:inherit;}
+  .seg button.on{background:#fff;color:var(--navy);box-shadow:0 1px 3px rgba(6,32,95,.12);}
+  .seg button.on.pay{color:var(--pay);}
+  .seg button.on.add{color:var(--add);}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(6,32,95,.05);}
+  .card h3{font-size:13px;color:var(--navy);margin:0 0 12px;font-weight:800;display:flex;align-items:center;gap:7px;}
+  .card h3 .n{width:22px;height:22px;border-radius:50%;background:var(--navy);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;}
+  label.fld{display:block;margin-bottom:11px;}
+  label.fld>span{display:block;font-size:11.5px;color:var(--muted);font-weight:700;margin-bottom:4px;}
+  input,select{font-family:inherit;font-size:15px;border:1px solid var(--line);border-radius:9px;padding:11px 12px;width:100%;background:var(--yellow);border-color:var(--yellow-br);color:var(--ink);}
+  input:focus,select:focus{outline:2px solid var(--gold);outline-offset:-1px;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .btn{background:var(--navy);color:#fff;border:none;border-radius:10px;padding:13px 16px;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;width:100%;}
+  .btn:hover{background:var(--navy2);}
+  .btn:disabled{opacity:.5;}
+  .btn.add{background:var(--add);}
+  .btn.o{background:#fff;color:var(--navy);border:1px solid var(--navy);}
+  .btn.sm{padding:8px 12px;font-size:13px;width:auto;border-radius:8px;}
+  .capwrap{border:2px dashed var(--line);border-radius:14px;padding:22px;text-align:center;background:#fafbff;}
+  .capwrap.has{border-style:solid;border-color:var(--gold);padding:10px;}
+  .preview{max-width:100%;max-height:300px;border-radius:10px;display:block;margin:0 auto;}
+  .filebtns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;}
+  .spinner{width:16px;height:16px;border:2px solid var(--navy);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;display:inline-block;vertical-align:-3px;margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .status{font-size:12.5px;font-weight:700;margin-top:10px;}
+  .status.ok{color:var(--ok);} .status.err{color:var(--warn);}
+  .pill{font-size:10.5px;font-weight:800;border-radius:20px;padding:2px 9px;background:#fbf1e0;color:#8a6d1e;}
+  .done{text-align:center;padding:24px 14px;}
+  .done .big{font-size:46px;}
+  .done h2{color:var(--ok);font-size:20px;margin:8px 0 4px;}
+  .done .bchg{font-size:15px;color:var(--ink);margin:10px 0 18px;font-weight:700;}
+  .done .bchg b{color:var(--navy);}
+  .hide{display:none !important;}
+  .mini{font-size:11px;color:var(--muted);}
+  .cfgwarn{background:#fce9e7;border:1px solid #e6b8b3;color:#8a201a;border-radius:10px;padding:11px 13px;font-size:12.5px;margin-bottom:14px;}
+
+  /* ===== 経理ビュー用 ===== */
+  .tabbar{display:flex;gap:6px;background:#eef1f8;border-radius:12px;padding:5px;margin-bottom:14px;}
+  .tabbar button{flex:1;border:none;background:none;padding:10px;border-radius:9px;font-size:13px;font-weight:800;color:var(--muted);cursor:pointer;font-family:inherit;}
+  .tabbar button.on{background:#fff;color:var(--navy);box-shadow:0 1px 3px rgba(6,32,95,.12);}
+  .page{display:none;} .page.on{display:block;}
+  .lockwrap{max-width:360px;margin:30px auto;text-align:center;}
+  .lockwrap .ic{font-size:40px;}
+  .lockwrap h2{font-size:16px;color:var(--navy);margin:8px 0 4px;}
+  .lockwrap p{font-size:12px;color:var(--muted);margin:0 0 16px;}
+  .acct-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
+  .acct-toolbar .sp{flex:1;}
+  .acct-toolbar select{font-size:13px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;width:auto;}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px;}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px;}
+  .kpi .lbl{font-size:11px;color:var(--muted);font-weight:700;}
+  .kpi .val{font-size:22px;font-weight:800;color:var(--navy);margin-top:3px;}
+  .kpi .val.pay{color:#b3261e;} .kpi .val.add{color:#0f7b4f;}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;}
+  .panel h3{font-size:13px;color:var(--navy);margin:0 0 10px;font-weight:800;display:flex;align-items:center;gap:7px;}
+  .panel h3::before{content:"";width:4px;height:13px;background:var(--gold);border-radius:2px;}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  table{border-collapse:collapse;width:100%;font-size:12px;}
+  th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap;}
+  th{background:#eef1f8;color:var(--navy);font-weight:700;}
+  td.num,th.num{text-align:right;}
+  .tag{display:inline-block;font-size:10.5px;font-weight:800;border-radius:20px;padding:1px 8px;}
+  .tag.pay{background:#fce9e7;color:#b3261e;} .tag.add{background:#e8f6ee;color:#0f7b4f;}
+  .barbg{background:#eef1f8;border-radius:5px;flex:1;} .bar{height:10px;background:var(--navy);border-radius:5px;}
+  .catrow{display:flex;align-items:center;gap:10px;margin-bottom:7px;}
+  .catrow .nm{width:90px;font-size:12px;} .catrow .amt{width:88px;text-align:right;font-weight:700;font-size:12px;}
+  .rlink{color:var(--navy);text-decoration:none;font-size:14px;}
+  .empty{text-align:center;color:var(--muted);padding:24px;font-size:12px;}
+  .acct-status{font-size:12px;color:var(--muted);} .acct-status.err{color:#b3261e;}
+</style>
+</head>
+<body>
+<header>
+  <div class="ttl">小口精算</div>
+  <div class="sub">共通の小口現金箱 ／ 支払・補充を記録（残高は自動計算）</div>
+</header>
+<main>
+  <div class="tabbar">
+    <button id="tab-rec" class="on" onclick="showPage('rec')">記録</button>
+    <button id="tab-acct" onclick="showPage('acct')">経理</button>
+  </div>
+  <div id="page-rec" class="page on">
+  <div class="cfgwarn hide" id="cfgwarn">送信先が未設定です。ファイル先頭の <b>GAS_URL</b> にWebアプリのURLを記載してください。</div>
+
+  <div id="flow">
+    <div class="seg">
+      <button id="seg-pay" class="on pay" onclick="setMode('支払')">支払を記録</button>
+      <button id="seg-add" class="add" onclick="setMode('補充')">補充を記録</button>
+    </div>
+
+    <!-- 支払：写真必須 -->
+    <div id="payPhoto" class="card">
+      <h3><span class="n">1</span>領収書の写真</h3>
+      <div class="capwrap" id="capwrap">
+        <div id="capEmpty">
+          <div style="font-size:38px">🧾</div>
+          <p class="mini" style="margin:8px 0 0;">領収書を撮影してください</p>
+          <div class="filebtns">
+            <label class="btn sm">📷 撮影する<input type="file" accept="image/*" capture="environment" style="display:none" onchange="onPick(event)"></label>
+            <label class="btn o sm">🖼 画像を選ぶ<input type="file" accept="image/*" style="display:none" onchange="onPick(event)"></label>
+          </div>
+        </div>
+        <img id="preview" class="preview" style="display:none" alt="領収書">
+      </div>
+      <div id="aiArea" class="hide"><div class="status" id="aiStatus"></div></div>
+      <div class="filebtns" id="retake" style="display:none;margin-top:10px;">
+        <label class="btn o sm">↻ 撮り直す<input type="file" accept="image/*" capture="environment" style="display:none" onchange="onPick(event)"></label>
+        <button class="btn o sm" onclick="runOCR()">✨ もう一度読み取る</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3><span class="n" id="step2no">2</span><span id="formTitle">内容を確認</span></h3>
+      <div class="grid2">
+        <label class="fld"><span>日付</span><input type="date" id="f-date"></label>
+        <label class="fld"><span>金額（円）</span><input type="number" inputmode="numeric" id="f-amount" placeholder="例 1280"></label>
+      </div>
+      <label class="fld" id="wrap-store"><span>利用先（店名）</span><input id="f-store" placeholder="例 ◯◯ドラッグ"></label>
+      <label class="fld" id="wrap-cat"><span>費目カテゴリ <span id="catAI" class="pill" style="display:none">AI判定</span></span><select id="f-category" onchange="document.getElementById('catAI').style.display='none'"></select></label>
+      <div class="grid2">
+        <label class="fld"><span id="userLbl">利用者（あなたの名前）</span><input id="f-user" placeholder="例 福田"></label>
+        <label class="fld"><span>メモ</span><input id="f-memo" placeholder="任意"></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <button class="btn" id="sendBtn" onclick="send()">📤 記録する</button>
+      <div class="status err" id="sendErr" style="text-align:center;"></div>
+    </div>
+  </div>
+
+  <div id="done" class="card done hide">
+    <div class="big">✅</div>
+    <h2 id="doneTtl">記録しました</h2>
+    <div class="bchg" id="doneBchg"></div>
+    <button class="btn" onclick="nextOne()">続けて記録する</button>
+  </div>
+  </div><!-- /page-rec -->
+
+  <div id="page-acct" class="page">
+    <!-- パスワードゲート -->
+    <div id="acct-lock" class="lockwrap">
+      <div class="ic">🔒</div>
+      <h2>経理ビュー</h2>
+      <p>パスワードを入力してください</p>
+      <input type="password" id="acct-pw" placeholder="パスワード" style="text-align:center" onkeydown="if(event.key==='Enter')unlockAcct()">
+      <div style="margin-top:10px;"><button class="btn" onclick="unlockAcct()">開く</button></div>
+      <div class="acct-status err" id="acct-pwerr" style="margin-top:8px;"></div>
+    </div>
+    <!-- 本体 -->
+    <div id="acct-body" class="hide">
+      <div class="acct-toolbar">
+        <select id="month" onchange="acctRender()"></select>
+        <span class="acct-status" id="acct-status">読み込み中…</span>
+        <span class="sp"></span>
+        <button class="btn o sm" onclick="acctReload()">↻ 更新</button>
+        <button class="btn sm" onclick="acctCSV()">CSV書き出し</button>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="lbl">現在の残高</div><div class="val" id="k-bal">¥0</div></div>
+        <div class="kpi"><div class="lbl">当月の支払合計</div><div class="val pay" id="k-pay">¥0</div></div>
+        <div class="kpi"><div class="lbl">当月の補充合計</div><div class="val add" id="k-add">¥0</div></div>
+        <div class="kpi"><div class="lbl">当月の件数</div><div class="val" id="k-cnt">0件</div></div>
+      </div>
+      <div class="panel"><h3>残高の推移</h3><div id="chart"></div></div>
+      <div class="panel"><h3>費目別の集計（当月の支払）</h3><div id="catbreak"></div></div>
+      <div class="panel"><h3>明細一覧</h3><div class="scroll" id="listWrap"></div></div>
+    </div>
+  </div>
+</main>
+
+<script>
+/* ====== 送信先（GASのウェブアプリ /exec URL を貼る） ====== */
+const GAS_URL = "https://script.google.com/macros/s/AKfycbx_WVAQJevHD2vV5mexSg3dv8LJGQAKleY9YHRKIwye7Ns1e8MPZNmEG6br9XVDqaEk/exec";
+const CATS = ["消耗品","食費","交通費","通信費","医療・衛生","接待・会議","修繕","備品","その他"];
+/* ======================================================== */
+
+let cats = CATS.slice();
+let mode = "支払";          // 支払 / 補充
+let currentImage = null;
+let curBalance = null;
+const LASTUSER = "serene_koguchi_lastuser";
+
+function s(id){ return document.getElementById(id); }
+function yen(n){ return "¥"+Number(n||0).toLocaleString("ja-JP"); }
+
+function gasPost(payload){
+  return fetch(GAS_URL, { method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:JSON.stringify(payload) }).then(r=>r.json());
+}
+
+function setMode(m){
+  mode=m;
+  s("seg-pay").classList.toggle("on", m==="支払");
+  s("seg-add").classList.toggle("on", m==="補充");
+  const pay = (m==="支払");
+  s("payPhoto").classList.toggle("hide", !pay);
+  s("wrap-store").classList.toggle("hide", !pay);
+  s("wrap-cat").classList.toggle("hide", !pay);
+  s("step2no").textContent = pay ? "2" : "1";
+  s("formTitle").textContent = pay ? "内容を確認" : "補充の内容";
+  s("userLbl").textContent = pay ? "利用者（あなたの名前）" : "補充した人";
+  s("sendBtn").className = pay ? "btn" : "btn add";
+  s("sendBtn").textContent = pay ? "📤 支払を記録する" : "📥 補充を記録する";
+}
+
+function onPick(ev){
+  const f=ev.target.files&&ev.target.files[0]; ev.target.value=""; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ const img=new Image();
+    img.onload=()=>{ const max=1400; let w=img.width,h=img.height;
+      if(Math.max(w,h)>max){ const sc=max/Math.max(w,h); w=Math.round(w*sc); h=Math.round(h*sc); }
+      const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+      cv.getContext("2d").drawImage(img,0,0,w,h);
+      currentImage=cv.toDataURL("image/jpeg",0.72);
+      showPreview(); runOCR();
+    };
+    img.src=rd.result;
+  };
+  rd.readAsDataURL(f);
+}
+function showPreview(){ const p=s("preview");
+  if(currentImage){ p.src=currentImage; p.style.display="block"; s("capEmpty").style.display="none"; s("capwrap").classList.add("has"); s("retake").style.display="flex"; }
+  else { p.style.display="none"; s("capEmpty").style.display="block"; s("capwrap").classList.remove("has"); s("retake").style.display="none"; s("aiArea").classList.add("hide"); }
+}
+async function runOCR(){
+  if(!currentImage||!GAS_URL) return;
+  const st=s("aiStatus"); s("aiArea").classList.remove("hide");
+  st.className="status"; st.innerHTML='<span class="spinner"></span>領収書を読み取っています…';
+  try{
+    const r=await gasPost({action:"ocr", image:currentImage});
+    if(!r.ok) throw new Error(r.error||"失敗");
+    const o=r.fields||{};
+    if(o.date) s("f-date").value=o.date;
+    if(o.store) s("f-store").value=o.store;
+    if(o.amount) s("f-amount").value=Math.round(Number(o.amount))||"";
+    if(o.category){ ensureCat(o.category); s("f-category").value=o.category; s("catAI").style.display="inline-block"; }
+    if(o.memo) s("f-memo").value=o.memo;
+    st.className="status ok"; st.textContent="✓ 読み取りました。確認して記録してください。";
+  }catch(e){ st.className="status err"; st.textContent="自動読み取りできませんでした。手で入力してください。（"+e.message+"）"; }
+}
+function ensureCat(c){ if(c&&!cats.includes(c)){ cats.push(c); fillCats(); } }
+function fillCats(){ s("f-category").innerHTML=cats.map(c=>`<option>${c}</option>`).join(""); }
+
+async function send(){
+  const amount=Number(s("f-amount").value)||0, date=s("f-date").value;
+  if(mode==="支払" && !currentImage){ s("sendErr").textContent="支払は領収書写真が必要です。"; return; }
+  if(!date){ s("sendErr").textContent="日付を入れてください。"; return; }
+  if(!amount){ s("sendErr").textContent="金額を入れてください。"; return; }
+  if(!GAS_URL){ s("sendErr").textContent="送信先(GAS_URL)が未設定です。管理者に連絡してください。"; return; }
+  s("sendErr").textContent="";
+  const btn=s("sendBtn"); const baseLabel=btn.textContent; btn.disabled=true; btn.innerHTML='<span class="spinner"></span>送信中…';
+  const before = curBalance;
+  try{
+    const user=s("f-user").value.trim();
+    const payload={ action:"save", type:mode, date, amount,
+      store: mode==="支払"? s("f-store").value.trim() : "",
+      category: mode==="支払"? s("f-category").value : "",
+      user, memo:s("f-memo").value.trim(),
+      image: mode==="支払"? currentImage : null,
+      device: navigator.userAgent.slice(0,60) };
+    const r=await gasPost(payload);
+    if(!r.ok) throw new Error(r.error||"送信失敗");
+    try{ if(user) localStorage.setItem(LASTUSER,user); }catch(_){}
+    // 完了画面（残高はスタッフに表示しない）
+    s("doneTtl").textContent = mode==="支払" ? "支払を記録しました" : "補充を記録しました";
+    s("doneBchg").textContent = "経理に反映されました。";
+    s("flow").classList.add("hide"); s("done").classList.remove("hide");
+    window.scrollTo({top:0});
+  }catch(e){ s("sendErr").textContent="送信できませんでした："+e.message; }
+  finally{ btn.disabled=false; btn.textContent=baseLabel; }
+}
+function nextOne(){
+  currentImage=null; showPreview();
+  s("f-date").value=new Date().toISOString().slice(0,10);
+  s("f-amount").value=""; s("f-store").value=""; s("f-memo").value="";
+  s("f-category").selectedIndex=0; s("catAI").style.display="none"; s("aiStatus").textContent="";
+  s("done").classList.add("hide"); s("flow").classList.remove("hide");
+  setMode(mode);
+}
+
+(function(){
+  fillCats(); 
+  s("f-date").value=new Date().toISOString().slice(0,10);
+  try{ const lu=localStorage.getItem(LASTUSER); if(lu) s("f-user").value=lu; }catch(_){}
+  setMode("支払");
+  if(!GAS_URL){ s("cfgwarn").classList.remove("hide"); }
+})();
+
+/* ===== タブ切替 ＆ 経理ビュー ===== */
+const ACCT_PW = "strength1234";
+let acctRows = [], acctLoaded = false, acctUnlocked = false;
+
+function showPage(p){
+  document.getElementById("tab-rec").classList.toggle("on", p==="rec");
+  document.getElementById("tab-acct").classList.toggle("on", p==="acct");
+  document.getElementById("page-rec").classList.toggle("on", p==="rec");
+  document.getElementById("page-acct").classList.toggle("on", p==="acct");
+  if(p==="acct" && acctUnlocked && !acctLoaded) acctReload();
+}
+function unlockAcct(){
+  const v=(document.getElementById("acct-pw").value||"").trim();
+  if(v===ACCT_PW){ acctUnlocked=true; document.getElementById("acct-lock").classList.add("hide"); document.getElementById("acct-body").classList.remove("hide"); if(!acctLoaded) acctReload(); }
+  else { document.getElementById("acct-pwerr").textContent="パスワードが違います。"; }
+}
+
+async function acctReload(){
+  if(!GAS_URL){ s("acct-status").textContent="送信先未設定"; return; }
+  const st=s("acct-status"); st.className="acct-status"; st.textContent="読み込み中…";
+  try{
+    const r=await gasPost({action:"list"});
+    if(!r.ok) throw new Error(r.error||"取得失敗");
+    acctRows=(r.rows||[]).map(x=>({...x, mk:(String(x.date||x.received||"")).slice(0,7)}));
+    acctRows.sort((a,b)=> String(a.received).localeCompare(String(b.received)));
+    acctLoaded=true; acctFillMonths(); st.textContent=`全${acctRows.length}件`; acctRender();
+  }catch(e){ st.className="acct-status err"; st.textContent="読み込めません："+e.message; }
+}
+function acctFillMonths(){
+  const months=[...new Set(acctRows.map(r=>r.mk).filter(Boolean))].sort().reverse();
+  const sel=s("month"), cur=sel.value;
+  sel.innerHTML='<option value="">すべての期間</option>'+months.map(m=>`<option value="${m}">${m.replace("-","年")}月</option>`).join("");
+  if([...sel.options].some(o=>o.value===cur)) sel.value=cur; else if(months.length) sel.value=months[0];
+}
+function acctBalance(){ let b=0; acctRows.forEach(r=>{ if(r.type==="補充")b+=r.amount; else if(r.type==="支払")b-=r.amount; }); return b; }
+function acctRender(){
+  const mk=s("month").value, inM=r=>!mk||r.mk===mk;
+  const mr=acctRows.filter(inM);
+  const pay=mr.filter(r=>r.type==="支払").reduce((a,r)=>a+r.amount,0);
+  const add=mr.filter(r=>r.type==="補充").reduce((a,r)=>a+r.amount,0);
+  s("k-bal").textContent=yen(acctBalance()); s("k-pay").textContent=yen(pay);
+  s("k-add").textContent=yen(add); s("k-cnt").textContent=mr.length+"件";
+  acctChart(); acctCat(mr); acctList(mr.slice().reverse());
+}
+function acctChart(){
+  if(!acctRows.length){ s("chart").innerHTML='<div class="empty">データがありません</div>'; return; }
+  const pts=[]; let b=0;
+  acctRows.forEach(r=>{ if(r.type==="補充")b+=r.amount; else if(r.type==="支払")b-=r.amount; pts.push({d:(r.date||r.received||"").toString().slice(0,10),v:b}); });
+  const W=Math.max(320,Math.min(900,pts.length*36)),H=180,padL=52,padR=12,padT=12,padB=26;
+  const xs=i=>padL+(pts.length<=1?0:(i/(pts.length-1))*(W-padL-padR));
+  const vals=pts.map(p=>p.v); let mn=Math.min(0,...vals),mx=Math.max(...vals,1); if(mx===mn)mx=mn+1;
+  const ys=v=>padT+(1-(v-mn)/(mx-mn))*(H-padT-padB);
+  const line=pts.map((p,i)=>`${xs(i).toFixed(1)},${ys(p.v).toFixed(1)}`).join(" ");
+  const area=`${padL},${ys(mn)} ${line} ${xs(pts.length-1)},${ys(mn)}`;
+  const zeroY=ys(0);
+  let svg=`<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet" style="max-width:100%">
+    <line x1="${padL}" y1="${ys(mx)}" x2="${W-padR}" y2="${ys(mx)}" stroke="#eef1f8"/>
+    <line x1="${padL}" y1="${zeroY}" x2="${W-padR}" y2="${zeroY}" stroke="#e3e7f0"/>
+    <text x="6" y="${ys(mx)+4}" font-size="10" fill="#6b7488">${yen(mx)}</text>
+    <text x="6" y="${zeroY+4}" font-size="10" fill="#6b7488">¥0</text>
+    <polygon points="${area}" fill="#0a3196" opacity="0.07"/>
+    <polyline points="${line}" fill="none" stroke="#0a3196" stroke-width="2" stroke-linejoin="round"/>`;
+  pts.forEach((p,i)=>{ if(pts.length<=24||i===pts.length-1) svg+=`<circle cx="${xs(i).toFixed(1)}" cy="${ys(p.v).toFixed(1)}" r="2.6" fill="#C8A951"/>`; });
+  svg+=`<text x="${padL}" y="${H-8}" font-size="9.5" fill="#6b7488">${pts[0].d}</text><text x="${W-padR}" y="${H-8}" font-size="9.5" fill="#6b7488" text-anchor="end">${pts[pts.length-1].d}</text></svg>`;
+  s("chart").innerHTML=svg;
+}
+function acctCat(mr){
+  const map={}; mr.filter(r=>r.type==="支払").forEach(r=>{ const c=r.category||"未分類"; map[c]=(map[c]||0)+r.amount; });
+  const es=Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  if(!es.length){ s("catbreak").innerHTML='<div class="empty">当月の支払はありません</div>'; return; }
+  const max=es[0][1];
+  s("catbreak").innerHTML=es.map(([c,v])=>`<div class="catrow"><div class="nm">${esc(c)}</div><div class="barbg"><div class="bar" style="width:${Math.max(4,Math.round(v/max*100))}%"></div></div><div class="amt">${yen(v)}</div></div>`).join("");
+}
+function acctList(list){
+  if(!list.length){ s("listWrap").innerHTML='<div class="empty">明細がありません</div>'; return; }
+  let h='<table><thead><tr><th>日付</th><th>種別</th><th class="num">金額</th><th class="num">残高</th><th>費目</th><th>利用先</th><th>利用者</th><th>メモ</th><th>領収書</th></tr></thead><tbody>';
+  list.forEach(r=>{ const tag=r.type==="補充"?'<span class="tag add">補充</span>':'<span class="tag pay">支払</span>';
+    h+=`<tr><td>${esc((r.date||"").toString().slice(0,10))}</td><td>${tag}</td><td class="num">${yen(r.amount)}</td><td class="num">${yen(r.balance)}</td><td>${esc(r.category)||'—'}</td><td>${esc(r.store)||'—'}</td><td>${esc(r.user)||'—'}</td><td>${esc(r.memo)||''}</td><td>${r.url?`<a class="rlink" href="${r.url}" target="_blank" rel="noopener">📷</a>`:'—'}</td></tr>`; });
+  s("listWrap").innerHTML=h+"</tbody></table>";
+}
+function acctCSV(){
+  const mk=s("month").value, list=acctRows.filter(r=>!mk||r.mk===mk).slice().reverse();
+  const head=["日付","種別","金額","残高","費目","利用先","利用者","メモ","領収書リンク"];
+  const q=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
+  const csv="\uFEFF"+head.join(",")+"\n"+list.map(r=>[(r.date||"").toString().slice(0,10),r.type,r.amount,r.balance,r.category,r.store,r.user,r.memo,r.url].map(q).join(",")).join("\n");
+  const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+  const d=new Date(); a.download=`小口精算_${mk||"全期間"}_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}.csv`; a.click();
+}
+function esc(t){return String(t==null?"":t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+
+</script>
+</body>
+</html>
