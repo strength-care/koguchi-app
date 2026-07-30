@@ -341,8 +341,14 @@
           <button class="settle-btn" onclick="doSettlePay()">この内容で精算する</button>
           <button class="settle-btn ghost" onclick="doSettleUndo()">精算を取消</button>
         </div>
+        <div class="settle-bar" style="margin-top:10px;border-top:1px dashed var(--line);padding-top:10px">
+          <input id="backReason" placeholder="差し戻す理由（例：領収書が読めない／私用が混ざっている）" class="settle-by" style="min-width:260px">
+          <button class="settle-btn ghost" onclick="doSendBack()">⤺ 選んだものを差し戻す</button>
+          <button class="settle-btn ghost" onclick="doSendBackUndo()">差し戻しを取消</button>
+        </div>
+        <div class="settle-msg" id="backMsg"></div>
         <div class="settle-msg" id="settleMsg"></div>
-        <p class="sub" style="margin-top:8px">チェックした立替の合計と、支払う金種の合計が一致すると精算できます。「自動で割り当て」は在庫の中から大きい金種順に割り当てます。足りなければ「両替」で崩してください。</p>
+        <p class="sub" style="margin-top:8px">申請がおかしいときは、理由を書いて差し戻してください。差し戻した立替は精算の対象から外れ、一覧に理由が残ります。<br>チェックした立替の合計と、支払う金種の合計が一致すると精算できます。「自動で割り当て」は在庫の中から大きい金種順に割り当てます。足りなければ「両替」で崩してください。</p>
       </div>
 
       <div class="panel"><h3>明細一覧</h3><div class="scroll" id="listWrap"></div></div>
@@ -413,6 +419,34 @@ function setBase(b){
   s("base-gh").classList.toggle("on", b==="グループホーム");
 }
 
+/* ===== 日付の扱い（1日ズレ対策） =====
+   ・todayJ()  … 端末の「今日」。toISOString()はUTCなので、朝9時前だと前日になっていた
+   ・ymd(v)    … シートから返る値を日本の年月日に直す。GASが日付セルをDateで返すと
+                 "2026-07-29T15:00:00.000Z" のようなUTC表記になり、
+                 先頭10文字を取ると1日前に見えてしまうため
+   ・dateSane()… 2017年のような明らかにおかしい年を見つける            */
+function todayJ(){
+  var d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function ymd(v){
+  if(v===null||v===undefined||v==="") return "";
+  var sv=String(v);
+  var m=sv.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(m) return sv;                                  // すでに YYYY-MM-DD
+  var d=new Date(sv);
+  if(!isNaN(d.getTime())){
+    var j=new Date(d.getTime()+9*3600*1000);        // 日本時間に寄せて年月日を取る
+    return j.getUTCFullYear()+"-"+String(j.getUTCMonth()+1).padStart(2,"0")+"-"+String(j.getUTCDate()).padStart(2,"0");
+  }
+  return sv.slice(0,10);
+}
+function dateSane(v){
+  var m=String(v||"").match(/^(\d{4})-(\d{2})-(\d{2})$/); if(!m) return false;
+  var y=Number(m[1]), now=new Date().getFullYear();
+  return y>=now-1 && y<=now+1;
+}
+
 function gasPost(payload){
   return fetch(GAS_URL, { method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"}, body:JSON.stringify(payload) }).then(r=>r.json());
 }
@@ -480,7 +514,16 @@ async function runOCR(){
       return;
     }
     applyFields(list[0]);
-    st.className="status ok"; st.textContent="✓ 読み取りました。確認して記録してください。";
+    var d0=(list[0]||{}).date||"";
+    if((list[0]||{}).yearFixed){
+      st.className="status err";
+      st.textContent="年が読み取れなかったため "+d0+" としました。領収書を見て確かめてください。";
+    }else if(d0 && !dateSane(d0)){
+      st.className="status err";
+      st.textContent="日付が「"+d0+"」と読み取られました。おかしいので、領収書を見て直してください。";
+    }else{
+      st.className="status ok"; st.textContent="✓ 読み取りました。確認して記録してください。";
+    }
   }catch(e){ st.className="status err"; st.textContent="自動読み取りできませんでした。手で入力してください。（"+e.message+"）"; }
 }
 function ensureCat(c){ if(c&&!cats.includes(c)){ cats.push(c); fillCats(); } }
@@ -492,6 +535,7 @@ async function send(){
   if(!date){ s("sendErr").textContent="日付を入れてください。"; return; }
   if(!amount){ s("sendErr").textContent = (mode==="補充") ? "補充する金種の枚数を入力してください。" : "金額を入れてください。"; return; }
   if(!GAS_URL){ s("sendErr").textContent="送信先(GAS_URL)が未設定です。管理者に連絡してください。"; return; }
+  if(!dateSane(date) && !confirm("日付が「"+date+"」になっています。\nこのまま記録しますか。")) return;
   s("sendErr").textContent="";
   const btn=s("sendBtn"); const baseLabel=btn.textContent; btn.disabled=true; btn.innerHTML='<span class="spinner"></span>送信中…';
   const before = curBalance;
@@ -565,10 +609,19 @@ function bulkOpen(){
 
 function bulkRow(img, o){
   o = o || {};
-  return { img:img, date:(o.date||new Date().toISOString().slice(0,10)),
+  var d = o.date || "";
+  var bad = d && !dateSane(d);          // 2017年のような明らかな読み違いを拾う
+  if(o.yearFixed){                      // GAS側で年を組み直したときも確認してもらう
+    return { img:img, date:d, store:(o.store||""),
+             amount:(Number(o.amount)>0?Math.round(Number(o.amount)):""),
+             category:(o.category||cats[0]||""), memo:(o.memo||""),
+             state:"ng", error:"年が読み取れなかったため "+d+" としました。領収書を見て確かめてください。" };
+  }
+  return { img:img, date:(d||todayJ()),
            store:(o.store||""), amount:(Number(o.amount)>0?Math.round(Number(o.amount)):""),
            category:(o.category||cats[0]||""), memo:(o.memo||""),
-           state:"ok", error:"" };
+           state:(bad?"ng":"ok"),
+           error:(bad?"日付が「"+d+"」と読み取られました。領収書を見て直してください。":"") };
 }
 
 /* 画像を1枚ずつ読み取って一覧に足す。1枚に複数枚写っていれば、その分だけ行が増える。 */
@@ -584,7 +637,7 @@ async function bulkAddFiles(files){
     var img="";
     try{ img = await shrink(files[i]); }
     catch(e){
-      BULK.push({ img:"", date:new Date().toISOString().slice(0,10), store:"", amount:"",
+      BULK.push({ img:"", date:todayJ(), store:"", amount:"",
                   category:(cats[0]||""), memo:"", state:"ng", error:"画像を開けませんでした" });
       bulkRender(); continue;
     }
@@ -599,7 +652,7 @@ async function bulkAddFiles(files){
         BULK.push(bulkRow(img, list[k]));
       }
     }catch(e){
-      BULK.push({ img:img, date:new Date().toISOString().slice(0,10), store:"", amount:"",
+      BULK.push({ img:img, date:todayJ(), store:"", amount:"",
                   category:(cats[0]||""), memo:"", state:"ng", error:(e.message||String(e)) });
     }
     bulkRender();
@@ -637,8 +690,8 @@ function bulkRender(){
     return '<div class="'+cls+'">'
       + '<div class="bhead">'+thumb+'<span class="bno">'+(i+1)+'枚目</span>'+badge+'</div>'
       + '<div class="bgrid">'
-      +   '<label>日付<input type="date" value="'+esc(r.date)+'" oninput="bulkSet('+i+',\'date\',this.value)"'+dis+'></label>'
-      +   '<label>金額（円）<input type="number" inputmode="numeric" value="'+esc(r.amount)+'" oninput="bulkSet('+i+',\'amount\',this.value)"'+dis+'></label>'
+      +   '<label>日付<input type="date" value="'+esc(r.date)+'" oninput="bulkSet('+i+',\'date\',this.value)" onchange="bulkSet('+i+',\'date\',this.value,1)"'+dis+'></label>'
+      +   '<label>金額（円）<input type="number" inputmode="numeric" value="'+esc(r.amount)+'" oninput="bulkSet('+i+',\'amount\',this.value)" onchange="bulkSet('+i+',\'amount\',this.value)"'+dis+'></label>'
       +   '<label class="wide">利用先（店名）<input value="'+esc(r.store)+'" oninput="bulkSet('+i+',\'store\',this.value)"'+dis+'></label>'
       +   '<label>費目<select onchange="bulkSet('+i+',\'category\',this.value)"'+dis+'>'+opts+'</select></label>'
       +   '<label>メモ<input value="'+esc(r.memo)+'" oninput="bulkSet('+i+',\'memo\',this.value)"'+dis+'></label>'
@@ -652,9 +705,23 @@ function bulkRender(){
   s("bulkSum").textContent = n ? (n+"件・合計 ¥"+sum.toLocaleString()) : "";
 }
 
-function bulkSet(i,k,v){ if(BULK[i]){ BULK[i][k]=v; if(k==="amount"){ var n=0,sum=0;
-  BULK.forEach(function(r){ if(r.state!=="saved"){ n++; sum+=Number(r.amount)||0; } });
-  s("bulkSum").textContent = n ? (n+"件・合計 ¥"+sum.toLocaleString()) : ""; } } }
+function bulkSet(i,k,v,commit){
+  var r=BULK[i]; if(!r) return;
+  r[k]=v;
+  if(k==="amount"){
+    var n=0,sum=0;
+    BULK.forEach(function(x){ if(x.state!=="saved"){ n++; sum+=Number(x.amount)||0; } });
+    s("bulkSum").textContent = n ? (n+"件・合計 ¥"+sum.toLocaleString()) : "";
+  }
+  /* 日付を直し終えたタイミング（確定時）だけ、印の付け外しをして描き直す。
+     入力の途中で描き直すとカーソルが飛ぶので oninput では何もしない。 */
+  if(k==="date" && commit && r.state!=="saved"){
+    var bad = v && !dateSane(v);
+    r.state = bad ? "ng" : "ok";
+    r.error = bad ? "日付の年がおかしいようです。領収書を見て直してください。" : "";
+    bulkRender();
+  }
+}
 
 function bulkDel(i){ BULK.splice(i,1); if(!BULK.length){ bulkCancel(); return; } bulkRender(); }
 
@@ -674,6 +741,10 @@ async function bulkSend(){
     if(!todo[i].date){ err.textContent=(i+1)+"枚目の日付を入れてください。"; return; }
     if(!(Number(todo[i].amount)>0)){ err.textContent=(i+1)+"枚目の金額を入れてください。"; return; }
   }
+  var oddDates = todo.filter(function(r){ return !dateSane(r.date); })
+                     .map(function(r){ return r.date; });
+  if(oddDates.length && !confirm("日付がおかしそうな行があります（"+oddDates.join("、")+"）。\nこのまま記録しますか。")) return;
+
   var user=(s("b-user").value||"").trim();
   var btn=s("bulkSendBtn"); btn.disabled=true;
 
@@ -713,7 +784,7 @@ async function bulkSend(){
 
 function nextOne(){
   currentImage=null; showPreview();
-  s("f-date").value=new Date().toISOString().slice(0,10);
+  s("f-date").value=todayJ();
   s("f-amount").value=""; s("f-store").value=""; s("f-memo").value="";
   s("f-category").selectedIndex=0; s("catAI").style.display="none"; s("aiStatus").textContent="";
   s("done").classList.add("hide");
@@ -725,7 +796,7 @@ function nextOne(){
 
 (function(){
   fillCats(); 
-  s("f-date").value=new Date().toISOString().slice(0,10);
+  s("f-date").value=todayJ();
   // ログイン名の自動取得：①URLの ?rec= → ②ポータルのログイン情報
   var loginName = (typeof getLoginName==="function") ? getLoginName() : "";
   if(loginName){
@@ -911,6 +982,39 @@ async function doSettlePay(){
     await acctReload(); loadStock();
   }catch(e){ msg.style.color="#b3261e"; msg.textContent="エラー："+e.message; }
 }
+async function doSendBack(){
+  var msg=document.getElementById("backMsg"); msg.textContent="";
+  var keys=selectedKeys();
+  if(!keys.length){ msg.textContent="差し戻す立替にチェックを入れてください。"; return; }
+  var by=(document.getElementById("settleBy").value||"").trim() || getLoginName();
+  if(!by){ msg.textContent="差し戻した人（担当者名）を入れてください。"; return; }
+  var reason=(document.getElementById("backReason").value||"").trim();
+  if(!reason){ msg.textContent="差し戻す理由を書いてください（本人に伝わります）。"; return; }
+  if(!confirm(keys.length+"件を差し戻します。よろしいですか。\n理由："+reason)) return;
+  msg.textContent="差し戻しています…";
+  try{
+    var r=await gasPost({action:"sendBack",keys:keys,by:by,reason:reason,device:navigator.userAgent.slice(0,60)});
+    if(!r.ok) throw new Error(r.error||"失敗");
+    msg.textContent="✓ "+r.updated+"件を差し戻しました。"+(r.skipped?"（精算済みの"+r.skipped+"件は対象外）":"");
+    document.getElementById("backReason").value="";
+    acctReload();
+  }catch(e){ msg.textContent="差し戻せませんでした："+(e.message||e); }
+}
+
+async function doSendBackUndo(){
+  var msg=document.getElementById("backMsg"); msg.textContent="";
+  var keys=selectedKeys();
+  if(!keys.length){ msg.textContent="取り消す立替にチェックを入れてください。"; return; }
+  if(!confirm(keys.length+"件の差し戻しを取り消します。よろしいですか。")) return;
+  msg.textContent="取り消しています…";
+  try{
+    var r=await gasPost({action:"sendBackUndo",keys:keys,device:navigator.userAgent.slice(0,60)});
+    if(!r.ok) throw new Error(r.error||"失敗");
+    msg.textContent="✓ "+r.updated+"件の差し戻しを取り消しました。";
+    acctReload();
+  }catch(e){ msg.textContent="取り消せませんでした："+(e.message||e); }
+}
+
 async function doSettleUndo(){
   var msg=document.getElementById("settleMsg");
   var keys=selectedKeys();
@@ -973,7 +1077,7 @@ async function acctReload(){
   try{
     const r=await gasPost({action:"list"});
     if(!r.ok) throw new Error(r.error||"取得失敗");
-    acctRows=(r.rows||[]).map(x=>({...x, mk:(String(x.date||x.received||"")).slice(0,7)}));
+    acctRows=(r.rows||[]).map(x=>({...x, date:ymd(x.date), mk:(ymd(x.date)||String(x.received||"")).slice(0,7)}));
     acctRows.sort((a,b)=> String(a.received).localeCompare(String(b.received)));
     acctLoaded=true; acctFillMonths(); st.textContent=`全${acctRows.length}件`; acctRender();
   }catch(e){ st.className="acct-status err"; st.textContent="読み込めません："+e.message; }
@@ -1007,7 +1111,7 @@ function yenAxis(n){
 function acctChart(){
   if(!acctRows.length){ s("chart").innerHTML='<div class="empty">データがありません</div>'; return; }
   const pts=[]; let b=0;
-  acctRows.forEach(r=>{ if(r.type==="補充")b+=r.amount; else if(r.type==="支払")b-=r.amount; pts.push({d:(r.date||r.received||"").toString().slice(0,10),v:b}); });
+  acctRows.forEach(r=>{ if(r.type==="補充")b+=r.amount; else if(r.type==="支払")b-=r.amount; pts.push({d:(ymd(r.date)||String(r.received||"").slice(0,10)),v:b}); });
   const W=Math.max(320,Math.min(900,pts.length*36)),H=180,padL=56,padR=14,padT=14,padB=26;
   const xs=i=>padL+(pts.length<=1?0:(i/(pts.length-1))*(W-padL-padR));
   const vals=pts.map(p=>p.v); let mn=Math.min(0,...vals),mx=Math.max(...vals,1); if(mx===mn)mx=mn+1;
@@ -1057,8 +1161,16 @@ function acctList(list){
     const key = esc(r.received);
     const cb = canSel ? `<input type="checkbox" class="selrow" data-key="${key}" data-amt="${r.amount}" onchange="updateSelSum()">` : '';
     let stat='—';
-    if(r.type==="支払"){ stat = r.settled ? `<span class="tag settled">精算済</span>${r.settledBy?'<br><span style=\'font-size:10px;color:#6b7488\'>'+esc(r.settledBy)+(r.settledAt?'・'+esc(r.settledAt):'')+'</span>':''}` : '<span class="tag unsettled">未精算</span>'; }
-    h+=`<tr class="${r.settled&&r.type==='支払'?'is-settled':''}"><td>${cb}</td><td>${esc((r.date||"").toString().slice(0,10))}</td><td>${tag}</td><td>${baseChip(r)}</td><td class="num">${yen(r.amount)}</td><td>${esc(r.category)||'—'}</td><td>${esc(r.store)||'—'}</td><td>${esc(r.user)||'—'}</td><td>${stat}</td><td>${esc(memoClean(r))||''}</td><td>${r.url?`<a class="rlink" href="${r.url}" target="_blank" rel="noopener">📷</a>`:'—'}</td></tr>`;
+    if(r.type==="支払"){
+      if(r.back){
+        stat = '<span class="tag" style="background:#fbeceb;color:#b3261e">差戻し</span>'
+             + (r.backReason ? '<br><span style="font-size:10px;color:#b3261e">'+esc(r.backReason)+'</span>' : '')
+             + (r.backBy ? '<br><span style="font-size:10px;color:#6b7488">'+esc(r.backBy)+(r.backAt?'・'+esc(r.backAt):'')+'</span>' : '');
+      } else {
+        stat = r.settled ? `<span class="tag settled">精算済</span>${r.settledBy?'<br><span style=\'font-size:10px;color:#6b7488\'>'+esc(r.settledBy)+(r.settledAt?'・'+esc(r.settledAt):'')+'</span>':''}` : '<span class="tag unsettled">未精算</span>';
+      }
+    }
+    h+=`<tr class="${r.settled&&r.type==='支払'?'is-settled':''}" ${r.back?'style="background:#fdf4f3"':''}><td>${cb}</td><td>${esc(ymd(r.date))}</td><td>${tag}</td><td>${baseChip(r)}</td><td class="num">${yen(r.amount)}</td><td>${esc(r.category)||'—'}</td><td>${esc(r.store)||'—'}</td><td>${esc(r.user)||'—'}</td><td>${stat}</td><td>${esc(memoClean(r))||''}</td><td>${r.url?`<a class="rlink" href="${r.url}" target="_blank" rel="noopener">📷</a>`:'—'}</td></tr>`;
   });
   s("listWrap").innerHTML=h+"</tbody></table>";
   updateSelSum();
@@ -1075,7 +1187,7 @@ function acctCSV(){
   const mk=s("month").value, list=acctRows.filter(r=>!mk||r.mk===mk).slice().reverse();
   const head=["日付","種別","拠点","金額","残高","費目","利用先","利用者","メモ","領収書リンク"];
   const q=v=>`"${String(v==null?"":v).replace(/"/g,'""')}"`;
-  const csv="\uFEFF"+head.join(",")+"\n"+list.map(r=>[(r.date||"").toString().slice(0,10),r.type,baseOf(r),r.amount,r.balance,r.category,r.store,r.user,memoClean(r),r.url].map(q).join(",")).join("\n");
+  const csv="\uFEFF"+head.join(",")+"\n"+list.map(r=>[ymd(r.date),r.type,baseOf(r),r.amount,r.balance,r.category,r.store,r.user,memoClean(r),r.url].map(q).join(",")).join("\n");
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
   const d=new Date(); a.download=`小口精算_${mk||"全期間"}_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}.csv`; a.click();
 }
