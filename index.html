@@ -60,7 +60,10 @@
   .cfgwarn{background:#fce9e7;border:1px solid #e6b8b3;color:#8a201a;border-radius:10px;padding:11px 13px;font-size:12.5px;margin-bottom:14px;}
 
   /* ===== 経理ビュー用 ===== */
-  .tabbar{display:flex;gap:6px;background:#f3ece1;border-radius:12px;padding:5px;margin-bottom:14px;}
+  /* 下の「支払を記録」のバーと横幅をそろえる（.page と同じ 1000px に収める） */
+  .tabbar{display:flex;gap:6px;background:#f3ece1;border-radius:12px;padding:5px;
+    max-width:1000px;margin:0 auto 14px;}
+  @media(max-width:1040px){ .tabbar{max-width:100%;} }
   .tabbar button{flex:1;border:none;background:none;padding:10px;border-radius:9px;font-size:13px;font-weight:800;color:var(--muted);cursor:pointer;font-family:inherit;}
   .tabbar button.on{background:#fff;color:var(--navy);box-shadow:0 1px 3px rgba(122,78,39,.14);}
   .page{display:none;} .page.on{display:block;}
@@ -151,6 +154,34 @@
   .bgrid .wide{grid-column:1 / -1;}
   .bdel{background:none;border:0;color:var(--muted);font-size:11px;font-family:inherit;text-decoration:underline;cursor:pointer;padding:4px 0 0;}
   @media(max-width:420px){ .bgrid{grid-template-columns:1fr;} }
+
+  /* ===== 明細の修正 ===== */
+  .editbg{position:fixed;inset:0;background:rgba(30,22,12,.35);z-index:300;display:none;
+    align-items:center;justify-content:center;padding:16px;}
+  .editbg.show{display:flex;}
+  .editbox{background:#fff;border-radius:14px;width:min(94vw,540px);max-height:88vh;overflow:auto;
+    padding:16px 18px;box-shadow:0 18px 50px rgba(41,30,20,.35);}
+  .editbox h3{margin:0 0 4px;font-size:16px;}
+  .editbox .ed-sub{margin:0 0 12px;font-size:12px;color:var(--muted);}
+  .ed-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .ed-grid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);}
+  .ed-grid label.wide{grid-column:1 / -1;}
+  .ed-grid input,.ed-grid select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+    font-size:14px;font-family:inherit;color:var(--ink);background:#fff;}
+  .ed-grid input.warn{border-color:#e0a3a3;background:#fdf4f3;}
+  .editbox .ed-note{font-size:12px;color:#b3261e;margin:10px 0 0;min-height:1em;}
+  .ed-hist{margin-top:12px;}
+  .ed-hist .ttl{font-size:11.5px;font-weight:800;color:var(--muted);margin-bottom:5px;}
+  .ed-hist .row{font-size:11.5px;color:#6b7488;background:#faf6f0;border-radius:8px;
+    padding:6px 9px;margin-bottom:4px;line-height:1.7;}
+  .ed-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;}
+  .ed-btns button{border-radius:9px;padding:9px 16px;font-size:14px;cursor:pointer;font-family:inherit;}
+  .ed-btns .ghost{border:1px solid var(--line);background:#fff;color:var(--muted);}
+  .ed-btns .primary{border:none;background:var(--navy);color:#fff;font-weight:700;}
+  .ed-btns .primary:disabled{opacity:.5;cursor:not-allowed;}
+  tr.editable{cursor:pointer;}
+  tr.editable:hover{background:#FFFBF0;}
+  td.badval{background:#fdf4f3;color:#b3261e;font-weight:700;}
 </style>
 </head>
 <body>
@@ -397,6 +428,30 @@
   </div>
 </main>
 
+
+<!-- ===== 明細の修正（経理だけが開ける） ===== -->
+<div class="editbg" id="editBg" onclick="if(event.target===this)closeEdit()">
+  <div class="editbox">
+    <h3>明細を修正する</h3>
+    <p class="ed-sub" id="edSub"></p>
+    <div class="ed-grid">
+      <label>日付<input type="date" id="ed-date"></label>
+      <label>金額<input type="number" id="ed-amount" inputmode="numeric" min="0" step="1"></label>
+      <label>費目<select id="ed-cat"></select></label>
+      <label>拠点<select id="ed-base"><option>訪問看護</option><option>グループホーム</option></select></label>
+      <label class="wide">利用先<input type="text" id="ed-store"></label>
+      <label class="wide">利用者<input type="text" id="ed-user"></label>
+      <label class="wide">メモ<input type="text" id="ed-memo"></label>
+      <label class="wide">修正の理由<input type="text" id="ed-reason" placeholder="例：領収書と金額が違っていたため"></label>
+    </div>
+    <p class="ed-note" id="edNote"></p>
+    <div class="ed-hist" id="edHist"></div>
+    <div class="ed-btns">
+      <button class="ghost" onclick="closeEdit()">やめる</button>
+      <button class="primary" id="edSaveBtn" onclick="saveEdit()">この内容で直す</button>
+    </div>
+  </div>
+</div>
 <script>
 /* ====== 送信先（GASのウェブアプリ /exec URL を貼る） ====== */
 const GAS_URL = "https://script.google.com/macros/s/AKfycbx_WVAQJevHD2vV5mexSg3dv8LJGQAKleY9YHRKIwye7Ns1e8MPZNmEG6br9XVDqaEk/exec";
@@ -1140,6 +1195,98 @@ function acctCat(mr){
 function baseOf(r){ return /^\[GH\]/.test(String((r&&r.memo)||'')) ? 'グループホーム' : ((r&&r.base)||'訪問看護'); }
 function memoClean(r){ return String((r&&r.memo)||'').replace(/^\[GH\]\s*/,''); }
 function baseChip(r){ var b=baseOf(r); return b==='グループホーム' ? '<span class="tag" style="background:#eae2f5;color:#6a49a8">GH</span>' : '<span class="tag" style="background:#e2eef5;color:#2f6aa8">訪看</span>'; }
+
+/* ===== 明細の修正（経理タブから）=====
+   読み取りの取り違え（2014年・桁ちがいなど）を、経理がその場で直せるようにする。
+   他人が出した領収書を書き換えられる仕組みなので、
+   「誰がいつ何を何に直したか」を必ず残す。 */
+let editRow = null;
+
+/* 明らかにおかしい日付か（去年〜来年の外） */
+function dateOdd(v){
+  const d = ymd(v); if(!d) return true;
+  const y = Number(d.slice(0,4)); if(!y) return true;
+  const now = new Date().getFullYear();
+  return (y < now-1 || y > now+1);
+}
+
+function openEdit(key){
+  const r = acctRows.find(x=>String(x.received)===String(key));
+  if(!r) return;
+  if(r.type!=="支払"){ alert("修正できるのは立替（支払）の明細だけです。"); return; }
+  if(r.settled){
+    alert("この明細は精算済みです。\n金額を変えると精算額と合わなくなるので、\n先に「精算を取消」してから修正してください。");
+    return;
+  }
+  editRow = r;
+  s("edSub").textContent = `受付 ${r.received}　${r.user||"利用者未記入"}`;
+  const cat = s("ed-cat");
+  const opts = [...new Set(cats.concat(r.category?[r.category]:[]))];
+  cat.innerHTML = opts.map(c=>`<option${c===r.category?" selected":""}>${esc(c)}</option>`).join("");
+  s("ed-date").value   = ymd(r.date) || "";
+  s("ed-amount").value = Number(r.amount)||0;
+  s("ed-base").value   = baseOf(r);
+  s("ed-store").value  = r.store || "";
+  s("ed-user").value   = r.user  || "";
+  s("ed-memo").value   = memoClean(r);
+  s("ed-reason").value = "";
+  s("edNote").textContent = dateOdd(r.date) ? "日付が今の年とかけ離れています。領収書を見て直してください。" : "";
+  s("ed-date").classList.toggle("warn", dateOdd(r.date));
+
+  /* これまでの修正の記録 */
+  const hist = Array.isArray(r.edits) ? r.edits : [];
+  s("edHist").innerHTML = hist.length
+    ? `<div class="ttl">これまでの修正</div>` + hist.map(h=>
+        `<div class="row">${esc(h.at||"")}　${esc(h.by||"")}<br>${esc(h.what||"")}${h.reason?"<br>理由："+esc(h.reason):""}</div>`).join("")
+    : "";
+  s("editBg").classList.add("show");
+}
+function closeEdit(){ s("editBg").classList.remove("show"); editRow=null; }
+
+async function saveEdit(){
+  if(!editRow) return;
+  const r = editRow;
+  const next = {
+    date:   s("ed-date").value,
+    amount: Math.round(Number(s("ed-amount").value)||0),
+    category: s("ed-cat").value,
+    base:   s("ed-base").value,
+    store: (s("ed-store").value||"").trim(),
+    user:  (s("ed-user").value||"").trim(),
+    memo:  (s("ed-memo").value||"").trim()
+  };
+  const reason = (s("ed-reason").value||"").trim();
+
+  if(!next.date){ s("edNote").textContent="日付を入れてください。"; return; }
+  if(dateOdd(next.date) && !confirm(`日付が ${next.date} になっています。このまま保存しますか？`)) return;
+  if(next.amount<=0){ s("edNote").textContent="金額を入れてください。"; return; }
+
+  /* 何が変わるかを日本語で組み立てる（これがそのまま記録に残る） */
+  const before = { date:ymd(r.date), amount:Number(r.amount)||0, category:r.category||"",
+                   base:baseOf(r), store:r.store||"", user:r.user||"", memo:memoClean(r) };
+  const label = { date:"日付", amount:"金額", category:"費目", base:"拠点",
+                  store:"利用先", user:"利用者", memo:"メモ" };
+  const diffs = Object.keys(label)
+    .filter(k=>String(before[k])!==String(next[k]))
+    .map(k=>`${label[k]}：${before[k]||"（空）"} → ${next[k]||"（空）"}`);
+  if(!diffs.length){ s("edNote").textContent="変わったところがありません。"; return; }
+  if(!reason){ s("edNote").textContent="修正の理由を入れてください（あとで見返すためです）。"; return; }
+  if(!confirm(diffs.join("\n")+"\n\nこの内容で直します。よろしいですか？")) return;
+
+  const btn=s("edSaveBtn"); btn.disabled=true; s("edNote").textContent="保存しています…";
+  try{
+    const res = await gasPost({ action:"editRow", key:r.received, fields:next,
+      what:diffs.join(" ／ "), reason:reason,
+      by:(getLoginName()||""), device:navigator.userAgent.slice(0,60) });
+    if(!res || !res.ok) throw new Error((res&&res.error)||"保存できませんでした");
+    closeEdit();
+    await acctLoad();
+    alert("修正しました。");
+  }catch(e){
+    s("edNote").textContent = "保存できませんでした："+String(e.message||e);
+  }finally{ btn.disabled=false; }
+}
+
 function acctList(list){
   const onlyUn = s("onlyUnsettled") && s("onlyUnsettled").checked;
   const bf = s("baseFilter") ? s("baseFilter").value : "";
@@ -1170,7 +1317,10 @@ function acctList(list){
         stat = r.settled ? `<span class="tag settled">精算済</span>${r.settledBy?'<br><span style=\'font-size:10px;color:#6b7488\'>'+esc(r.settledBy)+(r.settledAt?'・'+esc(r.settledAt):'')+'</span>':''}` : '<span class="tag unsettled">未精算</span>';
       }
     }
-    h+=`<tr class="${r.settled&&r.type==='支払'?'is-settled':''}" ${r.back?'style="background:#fdf4f3"':''}><td>${cb}</td><td>${esc(ymd(r.date))}</td><td>${tag}</td><td>${baseChip(r)}</td><td class="num">${yen(r.amount)}</td><td>${esc(r.category)||'—'}</td><td>${esc(r.store)||'—'}</td><td>${esc(r.user)||'—'}</td><td>${stat}</td><td>${esc(memoClean(r))||''}</td><td>${r.url?`<a class="rlink" href="${r.url}" target="_blank" rel="noopener">📷</a>`:'—'}</td></tr>`;
+    const canEdit = (r.type==="支払" && !r.settled);
+    const rowCls = [r.settled&&r.type==='支払'?'is-settled':'', canEdit?'editable':''].filter(Boolean).join(' ');
+    const rowClick = canEdit ? ` onclick="if(event.target.type!=='checkbox'&&event.target.tagName!=='A')openEdit('${key}')" title="押すと修正できます"` : '';
+    h+=`<tr class="${rowCls}"${rowClick} ${r.back?'style="background:#fdf4f3"':''}><td>${cb}</td><td class="${dateOdd(r.date)?'badval':''}">${esc(ymd(r.date))}</td><td>${tag}</td><td>${baseChip(r)}</td><td class="num">${yen(r.amount)}</td><td>${esc(r.category)||'—'}</td><td>${esc(r.store)||'—'}</td><td>${esc(r.user)||'—'}</td><td>${stat}</td><td>${esc(memoClean(r))||''}${(r.edits&&r.edits.length)?`<span class="tag" style="background:#eef1f4;color:#5a6b7d;margin-left:4px">修正${r.edits.length}</span>`:''}</td><td>${r.url?`<a class="rlink" href="${r.url}" target="_blank" rel="noopener">📷</a>`:'—'}</td></tr>`;
   });
   s("listWrap").innerHTML=h+"</tbody></table>";
   updateSelSum();
