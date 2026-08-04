@@ -1279,9 +1279,28 @@ async function saveEdit(){
       what:diffs.join(" ／ "), reason:reason,
       by:(getLoginName()||""), device:navigator.userAgent.slice(0,60) });
     if(!res || !res.ok) throw new Error((res&&res.error)||"保存できませんでした");
+
+    /* 一覧をまるごと読み直すと、もう一往復ぶん待たされるので、
+       直した1件だけを手元で書き換えて、その場で描き直す。 */
+    r.date     = next.date;
+    r.amount   = next.amount;
+    r.category = next.category;
+    r.store    = next.store;
+    r.user     = next.user;
+    r.memo     = (next.base==="グループホーム") ? ("[GH] "+next.memo) : next.memo;
+    r.base     = next.base;
+    r.mk       = (next.date||"").slice(0,7);
+    r.edits    = (res.edits && res.edits.length) ? res.edits
+               : [{at:"いま", by:(getLoginName()||""), what:diffs.join(" ／ "), reason:reason}];
+    /* 金額を直すと、それ以降の残高も変わる。GASが返してきた残高で入れ直す */
+    if(res.rows){
+      const m={}; res.rows.forEach(x=>{ m[String(x.received)] = x.balance; });
+      acctRows.forEach(x=>{ if(m[String(x.received)]!=null) x.balance = m[String(x.received)]; });
+    }
     closeEdit();
-    await acctLoad();
-    alert("修正しました。");
+    acctFillMonths();
+    acctRender();
+    const st=s("acct-status"); if(st) st.textContent = "修正しました（全"+acctRows.length+"件）";
   }catch(e){
     s("edNote").textContent = "保存できませんでした："+String(e.message||e);
   }finally{ btn.disabled=false; }
