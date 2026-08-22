@@ -373,13 +373,13 @@
           <button class="settle-btn ghost" onclick="doSettleUndo()">精算を取消</button>
         </div>
         <div class="settle-bar" style="margin-top:10px;border-top:1px dashed var(--line);padding-top:10px">
-          <input id="backReason" placeholder="差し戻す理由（例：領収書が読めない／私用が混ざっている）" class="settle-by" style="min-width:260px">
-          <button class="settle-btn ghost" onclick="doSendBack()">⤺ 選んだものを差し戻す</button>
-          <button class="settle-btn ghost" onclick="doSendBackUndo()">差し戻しを取消</button>
+          <input id="backReason" placeholder="否認する理由（例：領収書が読めない／私用が混ざっている）" class="settle-by" style="min-width:260px">
+          <button class="settle-btn ghost" onclick="doSendBack()">🚫 選んだものを否認する</button>
+          <button class="settle-btn ghost" onclick="doSendBackUndo()">否認を取消</button>
         </div>
         <div class="settle-msg" id="backMsg"></div>
         <div class="settle-msg" id="settleMsg"></div>
-        <p class="sub" style="margin-top:8px">申請がおかしいときは、理由を書いて差し戻してください。差し戻した立替は精算の対象から外れ、一覧に理由が残ります。<br>チェックした立替の合計と、支払う金種の合計が一致すると精算できます。「自動で割り当て」は在庫の中から大きい金種順に割り当てます。足りなければ「両替」で崩してください。</p>
+        <p class="sub" style="margin-top:8px">申請がおかしいときは、理由を書いて否認してください。否認した立替は精算の対象から外れ、一覧に「否認」の印と理由が残ります（本人へ返す操作はありません）。<br>チェックした立替の合計と、支払う金種の合計が一致すると精算できます。「自動で割り当て」は在庫の中から大きい金種順に割り当てます。足りなければ「両替」で崩してください。</p>
       </div>
 
       <div class="panel"><h3>明細一覧</h3><div class="scroll" id="listWrap"></div></div>
@@ -584,6 +584,35 @@ async function runOCR(){
 function ensureCat(c){ if(c&&!cats.includes(c)){ cats.push(c); fillCats(); } }
 function fillCats(){ s("f-category").innerHTML=cats.map(c=>`<option>${c}</option>`).join(""); }
 
+
+/* ===== 同じ領収書の二重申請チェック ===== */
+var DUP=null;                     // {date,amount,store,user} の配列（支払のみ）。読めなければ null のまま＝黙って通す
+function dupLoad(){
+  if(!GAS_URL) return;
+  gasPost({action:"list"}).then(function(r){
+    var rows=(r&&r.rows)||[];
+    DUP=rows.filter(function(x){ return x.type==="支払"; }).map(function(x){
+      return { date: ymd(x.date), amount: Number(x.amount)||0,
+               store: x.store||"", user: x.user||"" };
+    });
+  }).catch(function(){ /* 読めないときは警告なしで通す（記録は止めない） */ });
+}
+function dupFind(date, amount){
+  if(!DUP) return [];
+  var d=ymd(date), a=Number(amount)||0;
+  if(!d || !a) return [];
+  return DUP.filter(function(x){ return x.date===d && x.amount===a; });
+}
+function dupLine(x){
+  return x.date+"　¥"+Number(x.amount).toLocaleString()
+       + (x.store?"　"+x.store:"") + (x.user?"（"+x.user+"）":"");
+}
+function dupPush(date, amount, store, user){
+  if(!DUP) DUP=[];
+  DUP.push({date:ymd(date), amount:Number(amount)||0, store:store||"", user:user||""});
+}
+setTimeout(dupLoad, 1200);   // 起動直後の読み取りを邪魔しないよう少し待ってから裏で読む
+
 async function send(){
   const amount=Number(s("f-amount").value)||0, date=s("f-date").value;
   if(mode==="支払" && !currentImage){ s("sendErr").textContent="支払は領収書写真が必要です。"; return; }
@@ -591,6 +620,13 @@ async function send(){
   if(!amount){ s("sendErr").textContent = (mode==="補充") ? "補充する金種の枚数を入力してください。" : "金額を入れてください。"; return; }
   if(!GAS_URL){ s("sendErr").textContent="送信先(GAS_URL)が未設定です。管理者に連絡してください。"; return; }
   if(!dateSane(date) && !confirm("日付が「"+date+"」になっています。\nこのまま記録しますか。")) return;
+  if(mode==="支払"){
+    var dups=dupFind(date, amount);
+    if(dups.length && !confirm("同じ日付・同じ金額の記録がすでにあります。\n\n"
+        + dups.slice(0,3).map(dupLine).join("\n")
+        + (dups.length>3 ? "\nほか"+(dups.length-3)+"件" : "")
+        + "\n\n同じ領収書を二度送っていませんか？\nそれでも記録する場合はOKを押してください。")) return;
+  }
   s("sendErr").textContent="";
   const btn=s("sendBtn"); const baseLabel=btn.textContent; btn.disabled=true; btn.innerHTML='<span class="spinner"></span>送信中…';
   const before = curBalance;
@@ -607,6 +643,7 @@ async function send(){
       device: navigator.userAgent.slice(0,60) };
     const r=await gasPost(payload);
     if(!r.ok) throw new Error(r.error||"送信失敗");
+    if(mode==="支払") dupPush(date, amount, payload.store, user);
     try{ if(user) localStorage.setItem(LASTUSER,user); }catch(_){}
     // 完了画面（残高はスタッフに表示しない）
     s("doneTtl").textContent = mode==="支払" ? "支払を記録しました" : "補充を記録しました";
@@ -800,6 +837,19 @@ async function bulkSend(){
                      .map(function(r){ return r.date; });
   if(oddDates.length && !confirm("日付がおかしそうな行があります（"+oddDates.join("、")+"）。\nこのまま記録しますか。")) return;
 
+  /* 二重申請の見張り：①すでに記録されているものと同じ ②この束の中に同じものが2枚 */
+  var dupMsgs=[], seen={};
+  for(var di=0; di<todo.length; di++){
+    var t=todo[di];
+    var hit=dupFind(t.date, t.amount);
+    if(hit.length) dupMsgs.push((di+1)+"枚目 … 記録済みと同じ（"+dupLine(hit[0])+"）");
+    var kk=ymd(t.date)+"|"+(Number(t.amount)||0);
+    if(seen[kk]!==undefined) dupMsgs.push((di+1)+"枚目 … この束の"+(seen[kk]+1)+"枚目と同じ日付・同じ金額");
+    else seen[kk]=di;
+  }
+  if(dupMsgs.length && !confirm("二重の申請かもしれません。\n\n"+dupMsgs.join("\n")
+      +"\n\n同じ領収書を二度送っていませんか？\nそれでも記録する場合はOKを押してください。")) return;
+
   var user=(s("b-user").value||"").trim();
   var btn=s("bulkSendBtn"); btn.disabled=true;
 
@@ -816,6 +866,7 @@ async function bulkSend(){
         user:user, memo:memo, base:bulkBaseSel, image:r.img,
         device:navigator.userAgent.slice(0,60) });
       if(!res.ok) throw new Error(res.error||"送信失敗");
+      dupPush(r.date, r.amount, r.store, user);
       r.state="saved"; okCount++; total += Number(r.amount)||0;
     }catch(e){
       r.state="ng"; r.error="記録できませんでした："+(e.message||e); ngCount++;
@@ -1040,32 +1091,32 @@ async function doSettlePay(){
 async function doSendBack(){
   var msg=document.getElementById("backMsg"); msg.textContent="";
   var keys=selectedKeys();
-  if(!keys.length){ msg.textContent="差し戻す立替にチェックを入れてください。"; return; }
+  if(!keys.length){ msg.textContent="否認する立替にチェックを入れてください。"; return; }
   var by=(document.getElementById("settleBy").value||"").trim() || getLoginName();
-  if(!by){ msg.textContent="差し戻した人（担当者名）を入れてください。"; return; }
+  if(!by){ msg.textContent="否認した人（担当者名）を入れてください。"; return; }
   var reason=(document.getElementById("backReason").value||"").trim();
-  if(!reason){ msg.textContent="差し戻す理由を書いてください（本人に伝わります）。"; return; }
-  if(!confirm(keys.length+"件を差し戻します。よろしいですか。\n理由："+reason)) return;
-  msg.textContent="差し戻しています…";
+  if(!reason){ msg.textContent="否認する理由を書いてください（一覧に残ります）。"; return; }
+  if(!confirm(keys.length+"件を否認します。よろしいですか。\n理由："+reason)) return;
+  msg.textContent="否認しています…";
   try{
     var r=await gasPost({action:"sendBack",keys:keys,by:by,reason:reason,device:navigator.userAgent.slice(0,60)});
     if(!r.ok) throw new Error(r.error||"失敗");
-    msg.textContent="✓ "+r.updated+"件を差し戻しました。"+(r.skipped?"（精算済みの"+r.skipped+"件は対象外）":"");
+    msg.textContent="✓ "+r.updated+"件を否認しました。"+(r.skipped?"（精算済みの"+r.skipped+"件は対象外）":"");
     document.getElementById("backReason").value="";
     acctReload();
-  }catch(e){ msg.textContent="差し戻せませんでした："+(e.message||e); }
+  }catch(e){ msg.textContent="否認できませんでした："+(e.message||e); }
 }
 
 async function doSendBackUndo(){
   var msg=document.getElementById("backMsg"); msg.textContent="";
   var keys=selectedKeys();
   if(!keys.length){ msg.textContent="取り消す立替にチェックを入れてください。"; return; }
-  if(!confirm(keys.length+"件の差し戻しを取り消します。よろしいですか。")) return;
+  if(!confirm(keys.length+"件の否認を取り消します。よろしいですか。")) return;
   msg.textContent="取り消しています…";
   try{
     var r=await gasPost({action:"sendBackUndo",keys:keys,device:navigator.userAgent.slice(0,60)});
     if(!r.ok) throw new Error(r.error||"失敗");
-    msg.textContent="✓ "+r.updated+"件の差し戻しを取り消しました。";
+    msg.textContent="✓ "+r.updated+"件の否認を取り消しました。";
     acctReload();
   }catch(e){ msg.textContent="取り消せませんでした："+(e.message||e); }
 }
@@ -1329,7 +1380,7 @@ function acctList(list){
     let stat='—';
     if(r.type==="支払"){
       if(r.back){
-        stat = '<span class="tag" style="background:#fbeceb;color:#b3261e">差戻し</span>'
+        stat = '<span class="tag" style="background:#fbeceb;color:#b3261e">否認</span>'
              + (r.backReason ? '<br><span style="font-size:10px;color:#b3261e">'+esc(r.backReason)+'</span>' : '')
              + (r.backBy ? '<br><span style="font-size:10px;color:#6b7488">'+esc(r.backBy)+(r.backAt?'・'+esc(r.backAt):'')+'</span>' : '');
       } else {
