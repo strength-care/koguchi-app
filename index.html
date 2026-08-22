@@ -346,6 +346,7 @@
         <h3>立替の精算（金庫から支払う）</h3>
         <div class="settle-bar" style="margin-bottom:6px">
           <label class="settle-only"><input type="checkbox" id="onlyUnsettled" checked onchange="acctRender()"> 未精算のみ表示</label>
+          <label class="settle-only" style="margin-left:8px"><input type="checkbox" id="showBack" onchange="acctRender()"> 否認したものも表示</label>
           <label class="settle-only" style="margin-left:8px">拠点
             <select id="baseFilter" onchange="acctRender()">
               <option value="">すべて</option>
@@ -382,7 +383,7 @@
         <p class="sub" style="margin-top:8px">申請がおかしいときは、理由を書いて否認してください。否認した立替は精算の対象から外れ、一覧に「否認」の印と理由が残ります（本人へ返す操作はありません）。<br>チェックした立替の合計と、支払う金種の合計が一致すると精算できます。「自動で割り当て」は在庫の中から大きい金種順に割り当てます。足りなければ「両替」で崩してください。</p>
       </div>
 
-      <div class="panel"><h3>明細一覧</h3><div class="scroll" id="listWrap"></div></div>
+      <div class="panel"><h3>明細一覧</h3><p class="sub" id="backNote" style="display:none;color:#b3261e;margin:0 0 8px"></p><div class="scroll" id="listWrap"></div></div>
       <div class="panel"><h3>費目別の集計（当月の立替）</h3><div id="catbreak"></div></div>
 
       <!-- 入金（銀行から下ろして補充） -->
@@ -591,7 +592,7 @@ function dupLoad(){
   if(!GAS_URL) return;
   gasPost({action:"list"}).then(function(r){
     var rows=(r&&r.rows)||[];
-    DUP=rows.filter(function(x){ return x.type==="支払"; }).map(function(x){
+    DUP=rows.filter(function(x){ return x.type==="支払" && !x.back; }).map(function(x){
       return { date: ymd(x.date), amount: Number(x.amount)||0,
                store: x.store||"", user: x.user||"" };
     });
@@ -1198,8 +1199,9 @@ function acctBalance(){ let b=0; acctRows.forEach(r=>{ if(r.type==="補充")b+=r
 function acctRender(){
   const mk=s("month").value, inM=r=>!mk||r.mk===mk;
   const mr=acctRows.filter(inM);
-  const pay=mr.filter(r=>r.type==="支払").reduce((a,r)=>a+r.amount,0);
-  const unset=acctRows.filter(r=>r.type==="支払" && !r.settled).reduce((a,r)=>a+r.amount,0);
+  /* 否認したものは支払わないので、合計にも費目別の集計にも入れない */
+  const pay=mr.filter(r=>r.type==="支払" && !r.back).reduce((a,r)=>a+r.amount,0);
+  const unset=acctRows.filter(r=>r.type==="支払" && !r.settled && !r.back).reduce((a,r)=>a+r.amount,0);
   const ku=s("k-unset"); if(ku)ku.textContent=yen(unset);
   s("k-pay").textContent=yen(pay);
   s("k-cnt").textContent=mr.length+"件";
@@ -1237,7 +1239,7 @@ function acctChart(){
   s("chart").innerHTML=svg;
 }
 function acctCat(mr){
-  const map={}; mr.filter(r=>r.type==="支払").forEach(r=>{ const c=r.category||"未分類"; map[c]=(map[c]||0)+r.amount; });
+  const map={}; mr.filter(r=>r.type==="支払" && !r.back).forEach(r=>{ const c=r.category||"未分類"; map[c]=(map[c]||0)+r.amount; });
   const es=Object.entries(map).sort((a,b)=>b[1]-a[1]);
   if(!es.length){ s("catbreak").innerHTML='<div class="empty">当月の支払はありません</div>'; return; }
   const max=es[0][1];
@@ -1359,10 +1361,19 @@ async function saveEdit(){
 
 function acctList(list){
   const onlyUn = s("onlyUnsettled") && s("onlyUnsettled").checked;
+  const showBack = s("showBack") && s("showBack").checked;
   const bf = s("baseFilter") ? s("baseFilter").value : "";
   let view = list.slice();
-  if(onlyUn) view = view.filter(r=>r.type==="支払" && !r.settled);
+  /* 否認したものは既定で一覧から外す（データは消さずに隠すだけ。あとから見直せる） */
+  const hidden = showBack ? 0 : view.filter(r=>r.back).length;
+  if(!showBack) view = view.filter(r=>!r.back);
+  if(onlyUn) view = view.filter(r=>r.type==="支払" && !r.settled);   /* 否認ぶんは上で外れている（表示にすれば出る） */
   if(bf) view = view.filter(r=>baseOf(r)===bf);
+  const note = s("backNote");
+  if(note){
+    note.textContent = hidden ? ("否認したもの "+hidden+"件を隠しています（「否認したものも表示」で出せます）") : "";
+    note.style.display = hidden ? "block" : "none";
+  }
   if(!view.length){ s("listWrap").innerHTML='<div class="empty">明細がありません</div>'; updateSelSum(); return; }
   let h='<table><thead><tr><th></th><th>日付</th><th>種別</th><th>拠点</th><th class="num">金額</th><th>費目</th><th>利用先</th><th>利用者</th><th>精算</th><th>メモ</th><th>領収書</th></tr></thead><tbody>';
   view.forEach(r=>{
