@@ -209,10 +209,10 @@
       <div class="capwrap" id="capwrap">
         <div id="capEmpty">
           <div style="font-size:38px">🧾</div>
-          <p class="mini" style="margin:8px 0 0;">領収書を撮影してください</p>
+          <p class="mini" style="margin:8px 0 0;">領収書を撮影してください（PDFは「画像・PDFを選ぶ」から）</p>
           <div class="filebtns">
             <label class="btn sm">📷 撮影する<input type="file" accept="image/*" capture="environment" style="display:none" onchange="onPick(event)"></label>
-            <label class="btn o sm">🖼 画像を選ぶ<input type="file" accept="image/*" multiple style="display:none" onchange="onPick(event)"></label>
+            <label class="btn o sm">🖼 画像・PDFを選ぶ<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none" onchange="onPick(event)"></label>
           </div>
           <p class="mini" style="margin:8px 0 0;color:var(--muted)">
             領収書を机に並べて1枚に撮っても大丈夫です。写っている枚数を読み取って、自動で一覧にします。</p>
@@ -259,7 +259,7 @@
       <div id="bulkWrap"></div>
       <div class="bulkbar">
         <label class="btn o sm">📷 撮影して追加<input type="file" accept="image/*" capture="environment" style="display:none" onchange="onPickBulkAdd(event)"></label>
-        <label class="btn o sm">🖼 画像を追加<input type="file" accept="image/*" multiple style="display:none" onchange="onPickBulkAdd(event)"></label>
+        <label class="btn o sm">🖼 画像・PDFを追加<input type="file" accept="image/*,application/pdf,.pdf" multiple style="display:none" onchange="onPickBulkAdd(event)"></label>
         <span class="sp" style="flex:1"></span>
         <span class="mini" id="bulkSum"></span>
       </div>
@@ -578,7 +578,8 @@ async function runOCR(){
       st.className="status err";
       st.textContent="日付が「"+d0+"」と読み取られました。おかしいので、領収書を見て直してください。";
     }else{
-      st.className="status ok"; st.textContent="✓ 読み取りました。確認して記録してください。";
+      if(PDF_NOTE){ st.className="status err"; st.textContent=PDF_NOTE+"　✓ 読み取りました。確認して記録してください。"; }
+      else { st.className="status ok"; st.textContent="✓ 読み取りました。確認して記録してください。"; }
     }
   }catch(e){ st.className="status err"; st.textContent="自動読み取りできませんでした。手で入力してください。（"+e.message+"）"; }
 }
@@ -665,8 +666,82 @@ function bulkBase(b){
   s("bbase-gh").classList.toggle("on", b==="グループホーム");
 }
 
-/* 画像を縮小して dataURL にする（1枚ずつの onPick と同じ処理） */
+/* ===== PDFの領収書を読む =====
+   読み取りはAIに画像を送る作りなので、PDFはそのままでは扱えない。
+   1ページ目を画面の中で描いて画像に変えてから、いつもの流れへ回す。
+   GAS側の改修は不要。                                            */
+var PDFJS_JS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+var PDFJS_WK = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+var _pdfLib = null, _pdfLoading = null;
+var PDF_NOTE = "";   // 複数ページのときだけ、画面に出す一言が入る
+
+function pdfLoadLib(){
+  if(_pdfLib) return Promise.resolve(_pdfLib);
+  if(_pdfLoading) return _pdfLoading;
+  _pdfLoading = new Promise(function(res, rej){
+    if(window.pdfjsLib){
+      try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WK; }catch(_){}
+      _pdfLib = window.pdfjsLib; return res(_pdfLib);
+    }
+    var t = document.createElement("script");
+    t.src = PDFJS_JS;
+    t.onload = function(){
+      if(!window.pdfjsLib){ _pdfLoading=null; return rej(new Error("PDFを読む部品を取り込めませんでした")); }
+      try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WK; }catch(_){}
+      _pdfLib = window.pdfjsLib; res(_pdfLib);
+    };
+    t.onerror = function(){ _pdfLoading=null; rej(new Error("PDFを読む部品を取り込めませんでした")); };
+    document.head.appendChild(t);
+  });
+  return _pdfLoading;
+}
+function isPdf(f){
+  return !!(f && (f.type==="application/pdf" || /\.pdf$/i.test(f.name||"")));
+}
+function readBuf(f){
+  return new Promise(function(res, rej){
+    var r=new FileReader();
+    r.onerror=function(){ rej(new Error("ファイルを読めませんでした")); };
+    r.onload =function(){ res(r.result); };
+    r.readAsArrayBuffer(f);
+  });
+}
+function pdfFirstPage(f){
+  return pdfLoadLib().then(function(lib){
+    return readBuf(f).then(function(buf){
+      return lib.getDocument({ data:new Uint8Array(buf) }).promise;
+    }).then(function(doc){
+      var pages = doc.numPages || 1;
+      return doc.getPage(1).then(function(page){
+        var v1 = page.getViewport({ scale:1 });
+        var sc = 1400 / Math.max(v1.width, v1.height);      // 長辺1400pxの目安に合わせる
+        if(!isFinite(sc) || sc<=0) sc = 1;
+        if(sc > 3) sc = 3;                                   // 小さなPDFを引き伸ばしすぎない
+        var vp = page.getViewport({ scale:sc });
+        var cv = document.createElement("canvas");
+        cv.width  = Math.max(1, Math.round(vp.width));
+        cv.height = Math.max(1, Math.round(vp.height));
+        var cx = cv.getContext("2d");
+        cx.fillStyle = "#fff";                               // 透過は白で埋める
+        cx.fillRect(0, 0, cv.width, cv.height);
+        return page.render({ canvasContext:cx, viewport:vp }).promise.then(function(){
+          PDF_NOTE = (pages>1)
+            ? ("このPDFは全"+pages+"ページです。1ページ目だけを読み取りました。ほかのページに領収書があれば、そのページを画像にしてから入れてください。")
+            : "";
+          return cv.toDataURL("image/jpeg", 0.78);
+        });
+      });
+    });
+  })["catch"](function(e){
+    throw new Error("PDFを開けませんでした（"+(e&&e.message?e.message:e)
+                  +"）。写真に撮るか、画像に書き出してからお試しください。");
+  });
+}
+
+/* 画像を縮小して dataURL にする（1枚ずつの onPick と同じ処理）。PDFはここで画像に変える。 */
 function shrink(file){
+  PDF_NOTE = "";
+  if(isPdf(file)) return pdfFirstPage(file);
   return new Promise(function(res, rej){
     var rd=new FileReader();
     rd.onerror=function(){ rej(new Error("画像を読めませんでした")); };
@@ -702,19 +777,20 @@ function bulkOpen(){
 
 function bulkRow(img, o){
   o = o || {};
+  var pn = PDF_NOTE ? (PDF_NOTE+"　") : "";   // 複数ページのPDFだったときの注意
   var d = o.date || "";
   var bad = d && !dateSane(d);          // 2017年のような明らかな読み違いを拾う
   if(o.yearFixed){                      // GAS側で年を組み直したときも確認してもらう
     return { img:img, date:d, store:(o.store||""),
              amount:(Number(o.amount)>0?Math.round(Number(o.amount)):""),
              category:(o.category||cats[0]||""), memo:(o.memo||""),
-             state:"ng", error:"年が読み取れなかったため "+d+" としました。領収書を見て確かめてください。" };
+             state:"ng", error:pn+"年が読み取れなかったため "+d+" としました。領収書を見て確かめてください。" };
   }
   return { img:img, date:(d||todayJ()),
            store:(o.store||""), amount:(Number(o.amount)>0?Math.round(Number(o.amount)):""),
            category:(o.category||cats[0]||""), memo:(o.memo||""),
            state:(bad?"ng":"ok"),
-           error:(bad?"日付が「"+d+"」と読み取られました。領収書を見て直してください。":"") };
+           error:(pn+(bad?"日付が「"+d+"」と読み取られました。領収書を見て直してください。":"")) };
 }
 
 /* 画像を1枚ずつ読み取って一覧に足す。1枚に複数枚写っていれば、その分だけ行が増える。 */
