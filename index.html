@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>小口精算｜記録する【10-05】</title>
+<title>小口精算｜記録する【10-07】</title>
 <style>
   :root{ --navy:#7A4E27; --navy2:#9A6634; --pink:#E58A99; --gold:#F0C038; --ink:#3a2e26;
     --line:#ece5dc; --muted:#7a6b5d; --bg:#faf6f0; --card:#fff; --yellow:#fdf3da; --yellow-br:#ecd79a;
@@ -28,7 +28,7 @@
   .seg button.on.pay{color:var(--pay);}
   .seg button.on.add{color:var(--add);}
   /* 拠点ボタン3つ（10-04）：スマホ幅でも1行に収める */
-  #baseSeg button,#bbase-vn,#bbase-ghs,#bbase-ghi{padding:11px 4px;font-size:13px;white-space:nowrap;}
+  #baseSeg button,#bulkBaseSeg button,#bbase-vn,#bbase-ghs,#bbase-ghi{padding:11px 4px;font-size:13px;white-space:nowrap;}   /* ★10-07 作り直したボタンにも効くように */
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(122,78,39,.06);}
   .card h3{font-size:13px;color:var(--navy);margin:0 0 12px;font-weight:800;display:flex;align-items:center;gap:7px;}
   .card h3 .n{width:22px;height:22px;border-radius:50%;background:var(--navy);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:12px;}
@@ -232,9 +232,10 @@
       <h3><span class="n" id="step2no">2</span><span id="formTitle">内容を確認</span></h3>
       <div style="font-size:13px;font-weight:800;color:var(--muted);margin:2px 2px 6px">拠点</div>
       <div class="seg" id="baseSeg">
-        <button type="button" id="base-vn" class="on" onclick="setBase('訪問看護')">🏥 訪問看護</button>
-        <button type="button" id="base-ghs" onclick="setBase('GH志木')">🏠 GH志木</button>
-        <button type="button" id="base-ghi" onclick="setBase('GH石神')">🏠 GH石神</button>
+        <!-- ★10-07 GH のボタンは建物マスタ（buildingList の sites）から作り直す。読めないときはこの固定値のまま -->
+        <button type="button" id="base-vn" class="on" data-base="訪問看護" onclick="setBase('訪問看護')">🏥 訪問看護</button>
+        <button type="button" id="base-ghs" data-base="GH志木" onclick="setBase('GH志木')">🏠 GH志木</button>
+        <button type="button" id="base-ghi" data-base="GH石神" onclick="setBase('GH石神')">🏠 GH石神</button>
       </div>
       <div class="grid2">
         <label class="fld"><span>日付</span><input type="date" id="f-date"></label>
@@ -272,10 +273,10 @@
     </div>
     <div class="card">
       <div style="font-size:13px;font-weight:800;color:var(--muted);margin:2px 2px 6px">拠点（この一覧すべてに適用）</div>
-      <div class="seg">
-        <button type="button" id="bbase-vn" class="on" onclick="bulkBase('訪問看護')">🏥 訪問看護</button>
-        <button type="button" id="bbase-ghs" onclick="bulkBase('GH志木')">🏠 GH志木</button>
-        <button type="button" id="bbase-ghi" onclick="bulkBase('GH石神')">🏠 GH石神</button>
+      <div class="seg" id="bulkBaseSeg">
+        <button type="button" id="bbase-vn" class="on" data-base="訪問看護" onclick="bulkBase('訪問看護')">🏥 訪問看護</button>
+        <button type="button" id="bbase-ghs" data-base="GH志木" onclick="bulkBase('GH志木')">🏠 GH志木</button>
+        <button type="button" id="bbase-ghi" data-base="GH石神" onclick="bulkBase('GH石神')">🏠 GH石神</button>
       </div>
       <label class="fld" style="margin-top:10px"><span>利用者（あなたの名前）</span><input id="b-user" placeholder="例 福田"></label>
       <button class="btn" id="bulkSendBtn" onclick="bulkSend()">📤 まとめて記録する</button>
@@ -479,9 +480,48 @@ function s(id){ return document.getElementById(id); }
 function yen(n){ return "¥"+Number(n||0).toLocaleString("ja-JP"); }
 function setBase(b){
   baseSel=b;
-  s("base-vn").classList.toggle("on", b==="訪問看護");
-  s("base-ghs").classList.toggle("on", b==="GH志木");
-  s("base-ghi").classList.toggle("on", b==="GH石神");
+  document.querySelectorAll("#baseSeg button").forEach(el=>el.classList.toggle("on", el.dataset.base===b));
+}
+/* ===== ★10-07 拠点（GH志木／GH石神）の並びを建物マスタから =====
+   保管用GAS の buildingList が返す sites（例 ['志木','石神']）から GH のボタン・選択肢を作る。
+   将来 拠点が増えてもここが自動で追従する。読めないときは従来の固定値（志木・石神）のまま。
+   見出し（[GH志木][GH石神]）やメモ先頭の印の決まりは変えない */
+const MASTER_GAS_URL="https://script.google.com/macros/s/AKfycbzp77rv3-m1PZZ4C0JtRlfEn734bL2atgPXz8LZv9Nsn6oPQle9fwUpqjKdcIbvprAtLw/exec";   /* 保管用GAS（建物マスタ・読むだけ） */
+const SITES_DEFAULT=["志木","石神"];
+let SITES=SITES_DEFAULT.slice();
+window.SITES_SRC="固定値";
+function ghNames(){ return SITES.map(x=>"GH"+x); }
+function rebuildSiteUI(){
+  /* 登録タブ・まとめ読みのボタン */
+  [["baseSeg","setBase",()=>baseSel],["bulkBaseSeg","bulkBase",()=>bulkBaseSel]].forEach(([id,fn,cur])=>{
+    const seg=s(id); if(!seg) return;
+    const c=cur();
+    seg.innerHTML='<button type="button" data-base="訪問看護" onclick="'+fn+'(\'訪問看護\')">🏥 訪問看護</button>'
+      +SITES.map(st=>'<button type="button" data-base="GH'+esc(st)+'" onclick="'+fn+'(\'GH'+esc(st)+'\')">🏠 GH'+esc(st)+'</button>').join("");
+    window[fn](["訪問看護"].concat(ghNames()).indexOf(c)>=0?c:"訪問看護");
+  });
+  /* 経理タブの絞り込み・修正ダイアログの選択肢 */
+  const bf=s("baseFilter"); if(bf){ const c=bf.value;
+    bf.innerHTML='<option value="">すべて</option><option value="訪問看護">訪問看護</option><option value="グループホーム">グループホーム（全部）</option>'
+      +ghNames().map(nm=>'<option value="'+esc(nm)+'">'+esc(nm)+'</option>').join("")
+      +'<option value="GH（未選択）">GH（志木・石神 未選択の古い分）</option>';
+    if([...bf.options].some(o=>o.value===c)) bf.value=c; }
+  const eb=s("ed-base"); if(eb){ const c=eb.value;
+    eb.innerHTML='<option>訪問看護</option>'+ghNames().map(nm=>'<option>'+esc(nm)+'</option>').join("")+'<option value="GH（未選択）">GH（未選択）</option>';
+    if([...eb.options].some(o=>o.value===c)) eb.value=c; }
+}
+async function loadSites(){
+  try{
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),8000);
+    const r=await fetch(MASTER_GAS_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action:"buildingList"}),signal:ctl.signal});
+    clearTimeout(t);
+    const j=await r.json();
+    if(j && j.ok && Array.isArray(j.sites)){
+      const ss=j.sites.map(x=>String(x||"").trim()).filter(x=>x && x!=="その他");
+      if(ss.length){ SITES=ss; window.SITES_SRC="建物マスタ"; }
+    }
+  }catch(e){ /* 読めないときは固定値のまま */ }
+  rebuildSiteUI();
 }
 
 /* ===== 日付の扱い（1日ズレ対策） =====
@@ -671,9 +711,7 @@ var BULK_MAX = 12;
 
 function bulkBase(b){
   bulkBaseSel = b;
-  s("bbase-vn").classList.toggle("on", b==="訪問看護");
-  s("bbase-ghs").classList.toggle("on", b==="GH志木");
-  s("bbase-ghi").classList.toggle("on", b==="GH石神");
+  document.querySelectorAll("#bulkBaseSeg button").forEach(el=>el.classList.toggle("on", el.dataset.base===b));
 }
 
 /* ===== PDFの領収書を読む =====
@@ -1003,6 +1041,7 @@ function nextOne(){
   setMode("支払");
   if(typeof cmApplyLoginName==="function") cmApplyLoginName();
   if(!GAS_URL){ s("cfgwarn").classList.remove("hide"); }
+  loadSites();   // ★10-07 拠点（GH志木／GH石神）の並びを建物マスタから（読めなければ固定値）
 })();
 
 /* ===== タブ切替 ＆ 経理ビュー ===== */
@@ -1336,22 +1375,24 @@ function acctCat(mr){
 }
 /* ★10-04 拠点はメモ先頭の印で見分ける：[GH志木]／[GH石神]（古い分は [GH]＝志木か石神か不明）。
    GASは変えずに済むよう、印はメモに入れる。印が重なっていても一番くわしい印を採る */
-var TAG_RE=/^\s*[\[［]GH(志木|石神)?[\]］]\s*/;
+/* ★10-07 印の中の拠点名は固定（志木|石神）ではなく、建物マスタの sites に合わせて読む（[GH◯◯] なら何でも拾う） */
+var TAG_RE=/^\s*[\[［]GH([^\]］]*)[\]］]\s*/;
 function tagParse(memo){ var m=String(memo||''), site=null, gh=false, x;
-  while((x=m.match(TAG_RE))){ gh=true; if(x[1]) site=x[1]; m=m.slice(x[0].length); }
+  while((x=m.match(TAG_RE))){ gh=true; var nm=String(x[1]||'').trim(); if(nm) site=nm; m=m.slice(x[0].length); }
   return { base: site ? 'GH'+site : (gh ? 'GH（未選択）' : null), text:m }; }
 function baseOf(r){ var t=tagParse(r&&r.memo); if(t.base) return t.base;
-  var b=(r&&r.base)||''; return /志木/.test(b)?'GH志木':/石神/.test(b)?'GH石神':(b==='グループホーム'?'GH（未選択）':'訪問看護'); }
+  var b=(r&&r.base)||'';
+  for(var i=0;i<SITES.length;i++){ if(b.indexOf(SITES[i])>=0) return 'GH'+SITES[i]; }
+  return (b==='グループホーム'?'GH（未選択）':'訪問看護'); }
 function isGH(b){ return /^GH/.test(String(b||'')); }
 function baseCoarse(b){ return isGH(b) ? 'グループホーム' : '訪問看護'; }
 function withBaseTag(b, memo){ var t=tagParse(memo).text;
-  if(b==='GH志木'||b==='GH石神') return ('['+b+'] '+t).trim();
+  if(ghNames().indexOf(b)>=0) return ('['+b+'] '+t).trim();
   if(b==='GH（未選択）'||b==='グループホーム') return ('[GH] '+t).trim();
   return t; }
 function memoClean(r){ return tagParse(r&&r.memo).text; }
 function baseChip(r){ var b=baseOf(r);
-  if(b==='GH志木') return '<span class="tag" style="background:#eae2f5;color:#6a49a8">GH志木</span>';
-  if(b==='GH石神') return '<span class="tag" style="background:#eae2f5;color:#6a49a8">GH石神</span>';
+  if(ghNames().indexOf(b)>=0) return '<span class="tag" style="background:#eae2f5;color:#6a49a8">'+esc(b)+'</span>';
   if(b==='GH（未選択）') return '<span class="tag" style="background:#f3ece1;color:#7a4e27" title="志木か石神か未選択。押して修正で選べます">GH？</span>';
   return '<span class="tag" style="background:#e2eef5;color:#2f6aa8">訪看</span>'; }
 
